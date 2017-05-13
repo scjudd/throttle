@@ -24,16 +24,6 @@ defmodule Throttle do
     GenServer.reply(pid, fun.())
   end
 
-  defp reverse_pop(stack) do
-    [first | remaining] = Enum.reverse(stack)
-    {first, Enum.reverse(remaining)}
-  end
-
-  defp reverse_split(stack, n) do
-    {first_n, remaining} = stack |> Enum.reverse() |> Enum.split(n)
-    {first_n, Enum.reverse(remaining)}
-  end
-
   @doc false
   def init(state) do
     {:ok, state}
@@ -43,31 +33,32 @@ defmodule Throttle do
   def handle_call({:call, fun}, from, {:ready, interval, n}) do
     async_apply({from, fun})
     Process.send_after(self(), :resume, interval)
-    {:noreply, {:triggered, {interval, 1, n}, []}}
+    {:noreply, {:triggered, {interval, 1, n}, :queue.new()}}
   end
 
   @doc false
-  def handle_call({:call, fun}, from, {:triggered, {interval, n, max}, stack}) when n < max do
-    {first, remaining} = reverse_pop([{from, fun} | stack])
+  def handle_call({:call, fun}, from, {:triggered, {interval, n, max}, queue}) when n < max do
+    {{:value, first}, remaining} = {from, fun} |> :queue.in(queue) |> :queue.out()
     async_apply(first)
     {:noreply, {:triggered, {interval, n + 1, max}, remaining}}
   end
 
   @doc false
-  def handle_call({:call, fun}, from, {:triggered, {interval, n, max}, stack}) do
-    {:noreply, {:triggered, {interval, n, max}, [{from, fun} | stack]}}
+  def handle_call({:call, fun}, from, {:triggered, {interval, n, max}, queue}) do
+    {:noreply, {:triggered, {interval, n, max}, :queue.in({from, fun}, queue)}}
   end
 
   @doc false
-  def handle_info(:resume, {:triggered, {interval, _n, max}, []}) do
-    {:noreply, {:ready, interval, max}}
-  end
-
-  @doc false
-  def handle_info(:resume, {:triggered, {interval, _n, max}, stack}) do
-    {funs, remaining} = reverse_split(stack, max)
-    Enum.each(funs, &async_apply/1)
-    Process.send_after(self(), :resume, interval)
-    {:noreply, {:triggered, {interval, length(funs), max}, remaining}}
+  def handle_info(:resume, {:triggered, {interval, _n, max}, queue}) do
+    case :queue.is_empty(queue) do
+      true ->
+        {:noreply, {:ready, interval, max}}
+      false ->
+        n = min(:queue.len(queue), max)
+        {funs, remaining} = :queue.split(n, queue)
+        Enum.each(:queue.to_list(funs), &async_apply/1)
+        Process.send_after(self(), :resume, interval)
+        {:noreply, {:triggered, {interval, n, max}, remaining}}
+    end
   end
 end
