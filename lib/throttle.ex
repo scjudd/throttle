@@ -9,8 +9,8 @@ defmodule Throttle do
 
   use GenServer
 
-  def start_link(interval, n \\ 1) do
-    GenServer.start_link(__MODULE__, {:ready, interval, n})
+  def start_link(interval, n \\ 1, opts \\ []) do
+    GenServer.start_link(__MODULE__, {:ready, interval, n}, opts)
   end
 
   @doc """
